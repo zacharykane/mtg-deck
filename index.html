@@ -1,0 +1,170 @@
+<!doctype html>
+<head>
+    <title>mongoDB.Stitch</title>
+</head>
+<body>
+    <div class="filters">
+        <select>
+            <option>Red</option>
+            <option>Blue</option>
+            <option>Green</option>
+            <option>Black</option>
+            <option>White</option>
+        </select>
+        <input id="cost" />
+        <select>
+            <option>Creature</option>
+            <option>Sorcery</option>
+            <option>Instant</option>
+            <option>Enchantment</option>
+            <option>Artifact</option>
+            <option>Land</option>
+        </select>
+    </div>
+    <div class="deck">
+    </div>
+    <script src="https://s3.amazonaws.com/stitch-sdks/js/bundles/4.0.8/stitch.js"></script>
+    <script>
+        function createCard(doc) {
+            const colorHash = {
+                B: '#CCC2C0',
+                W: '#FFFCD6',
+                U: '#AAE0FA',
+                G: '#9BD3AE',
+                R: '#FAAA8F',
+            };
+
+            const bgColorHash = {
+                B: '#3d3a39',
+                W: '#fffef2',
+                U: '#88b3c8',
+                G: '#7ca88b',
+                R: '#c88872',
+            }
+
+            const backgroundColor = doc.colors.reduce((accumulator, current, index, arr) => {
+                if (arr.length === 1) {
+                    accumulator = accumulator + `${colorHash[current]} 0%, ${colorHash[current]} 100%)`;
+                    return accumulator;
+                }
+
+                const percentage = parseInt(((index + 1) / arr.length) * 100, 10);
+
+                accumulator = accumulator + `${colorHash[current]} ${percentage}%`;
+
+                if (index + 1 === arr.length) {
+                    accumulator = accumulator + ');';
+                } else {
+                    accumulator = accumulator + ', ';
+                }
+
+                return accumulator;
+            }, 'background: linear-gradient(135deg, ');
+
+            const creatureStatus = `<span style="align-self: flex-end; margin-top: auto">${doc.power && doc.toughness ? `${doc.power}/${doc.toughness}` : '&nbsp;'}</span>`;
+
+            // const costRegex = new RegExp('(\{X\})?(\{\d\})?(\{[BUGRW]\})*', 'g'); ///(\{X\})?(\{\d\})?(\{[BUGRW]\})*/;
+            // const costIcons = costRegex.exec(doc.manaCost);
+            // const costIcons = doc.manaCost.match(costRegex);
+            // console.log('1', costRegex.exec(doc.manaCost));
+            // console.log('2', costRegex.exec(doc.manaCost));
+            // while ((check = costRegex.exec(doc.manaCost)) !== null) {
+            //     console.log('hi', check);
+            // }
+
+            let costIcons = ['0'];
+
+            if (doc.manaCost) {
+                costIcons = doc.manaCost.split('}').map(icon => icon ? `${icon}}` : null).filter(icon => icon);
+            }
+
+            const styledCosts = costIcons.reduce((acc, cost) => {
+                console.log(cost);
+                const rawCost = cost.replace(/\{|\}+/g, '');
+                if (rawCost.match(/[X\d]/g)) {
+                    acc = acc + `<span style="border-radius: 100%; color: #fff; background-color: #999999; width: 1.5em; line-height: 1.5; display: inline-block; text-align:center">${rawCost}</span>`;
+                }
+                if (rawCost.match(/[BWUGR]/g)) {
+                    const backgroundColor = bgColorHash[rawCost];
+                    const foregroundColor = rawCost === 'W' ? 'black' : 'white';
+                    acc = acc + `<span style="border-radius: 100%; color: ${foregroundColor}; background-color: ${backgroundColor}; width: 1.5em; line-height: 1.5; display: inline-block; text-align:center">${rawCost}</span>`;
+                }
+                return acc;
+            }, '');
+            // console.log(styledCosts);
+
+            return `
+                <div style="padding: 3px">
+                    <div style="
+                        width: 300px;
+                        height: 400px;
+                        border: 6px solid ${doc.borderColor};
+                        border-radius: 3px;
+                        ${backgroundColor};
+                        box-shadow: 0 0 3px 0 grey;
+                        display: flex;
+                        flex-direction: column;
+                        padding: 6px;
+                    ">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="font-weight: bold;">${doc.name}</span>
+                            <span>${styledCosts}</span>
+                        </div>
+                        <span>${doc.type}</span>
+                        <span>${doc.text}</span>
+                        ${doc.flavorText ? `<span style="font-style: italic; margin-top: auto;">${doc.flavorText}</span>` : ''}
+                        ${creatureStatus}
+                    </div>
+                </div>
+            `;
+        }
+
+        let lastId;
+
+        function fetchDocuments() {
+            const query = {
+                colors: ['B', 'W'],
+            };
+
+            if (lastId) {
+                query._id = { $lt: lastId };
+            }
+
+            db.collection('cards')
+                .find(query, { limit: 100, sort: { _id: -1 } })
+                .asArray()
+                .then(docs => {
+                    // console.log("Found docs", docs);
+                    console.log("Found docs", docs[docs.length - 1]._id);
+                    console.log("[MongoDB Stitch] Connected to Stitch");
+                    lastId = docs[docs.length - 1]._id;
+
+                    return docs.map(createCard);
+                }).then(cards => {
+                    const deck = document.querySelector('.deck');
+
+                    const page = document.createElement('div');
+                    page.style = 'display: flex; flex-wrap: wrap';
+                    cards.forEach((card) => page.appendChild(document.createRange().createContextualFragment(card)));
+
+                    deck.replaceChild(page, deck.firstChild);
+                }).catch(err => {
+                    console.error(err);
+                });
+        }
+
+        const client = stitch.Stitch.initializeDefaultAppClient('deck-cvaoy');
+
+        const db = client.getServiceClient(stitch.RemoteMongoClient.factory, 'mongodb-atlas').db('mtg');
+
+        client.auth.loginWithCredential(new stitch.AnonymousCredential()).then(user => {
+            console.log('User: ', user.id);
+            fetchDocuments();
+        }).catch(err => {
+            console.error(err);
+        });
+
+        document.body.addEventListener('click', fetchDocuments);
+
+    </script>
+</body>
